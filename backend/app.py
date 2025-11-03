@@ -1,5 +1,5 @@
-from fastapi import FastAPI, File, UploadFile, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 import torch
 import numpy as np
 import cv2
@@ -7,7 +7,6 @@ import tempfile
 import os
 from model import PoseCNN_LSTM_Attn
 from mediapipe.python.solutions import holistic
-from mediapipe.python.solutions.drawing_utils import draw_landmarks
 
 # --- Configuration ---
 NUM_JOINTS = 47
@@ -20,16 +19,14 @@ reverse_label_map = {
     48:57, 49:58, 51:60, 53:62, 55:64, 58:67, 62:71, 63:72, 64:74
 }
 
-# --- Allowed origins ---
+# --- Allowed origins for CORS ---
 ALLOWED_ORIGINS = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
-    "http://localhost:8080",
-    "http://localhost:8081",
     "https://koala-sign-learn.vercel.app"
 ]
 
-# Optionally append environment variable
+# Optionally include environment variable
 VERCEL_FRONTEND_URL = os.environ.get("VITE_FRONTEND_URL")
 if VERCEL_FRONTEND_URL:
     ALLOWED_ORIGINS.append(VERCEL_FRONTEND_URL)
@@ -37,24 +34,16 @@ if VERCEL_FRONTEND_URL:
 # --- Initialize FastAPI ---
 app = FastAPI()
 
-# --- Dynamic CORS middleware ---
-@app.middleware("http")
-async def dynamic_cors_middleware(request: Request, call_next):
-    # Handle preflight
-    if request.method == "OPTIONS":
-        response = JSONResponse(content={"ok": True})
-    else:
-        response = await call_next(request)
+# --- Add CORSMiddleware (robust solution) ---
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,  # exact origins only
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-    origin = request.headers.get("origin")
-    if origin in ALLOWED_ORIGINS:
-        response.headers["Access-Control-Allow-Origin"] = origin
-        response.headers["Access-Control-Allow-Credentials"] = "true"
-        response.headers["Access-Control-Allow-Methods"] = "GET,POST,OPTIONS"
-        response.headers["Access-Control-Allow-Headers"] = "Authorization,Content-Type"
-    return response
-
-# --- Load model ---
+# --- Load the model ---
 device = torch.device("cpu")
 model = PoseCNN_LSTM_Attn(num_classes=67)
 state = torch.load("best_model.pt", map_location=device)
@@ -113,11 +102,13 @@ def root():
 async def predict(video: UploadFile = File(...)):
     tmp_path = None
     try:
+        # Save uploaded video to temporary file
         with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp_file:
             contents = await video.read()
             tmp_file.write(contents)
             tmp_path = tmp_file.name
         
+        # Preprocess and predict
         x = preprocess_video(tmp_path)
         with torch.no_grad():
             output = model(x)
