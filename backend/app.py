@@ -23,7 +23,9 @@ reverse_label_map = {
 ALLOWED_ORIGINS = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
-    "https://koala-sign-learn.vercel.app"
+    "https://koala-sign-learn.vercel.app",
+    "http://localhost:8080",
+    "http://localhost:8000"
 ]
 
 # Optionally include environment variable

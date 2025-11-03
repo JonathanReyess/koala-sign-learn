@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Camera, StopCircle, CheckCircle, XCircle, Upload, Play, Loader } from "lucide-react";
+import { Camera, StopCircle, CheckCircle, XCircle, Upload, Play, Pause, Loader } from "lucide-react";
 import { toast } from "sonner";
 import { useIsMobile } from "@/hooks/use-mobile";
 
@@ -53,6 +53,7 @@ export const LearningCard = ({ word, onNext, onPrevious }: LearningCardProps) =>
   const [videoFile, setVideoFile] = useState<VideoFile | null>(null);
   const [isReadyToSubmit, setIsReadyToSubmit] = useState(false);
   const [countdown, setCountdown] = useState<number | null>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
   const WORD_TO_ID_MAP = getWordToIdMap();
   const videoRef = useRef<HTMLVideoElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -63,6 +64,28 @@ export const LearningCard = ({ word, onNext, onPrevious }: LearningCardProps) =>
   const ID_TO_WORD_MAP: { [id: string]: string } = Object.fromEntries(
     Object.entries(WORD_TO_ID_MAP).map(([word, id]) => [id, word])
   );
+
+  // Start camera on mount
+  useEffect(() => {
+    const startCamera = async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        if (videoRef.current) videoRef.current.srcObject = stream;
+      } catch (err) {
+        toast.error("Camera access denied or unavailable.");
+        console.error(err);
+      }
+    };
+    startCamera();
+  
+    // Stop camera only when component unmounts
+    return () => {
+      if (videoRef.current?.srcObject) {
+        const stream = videoRef.current.srcObject as MediaStream;
+        stream.getTracks().forEach(track => track.stop());
+      }
+    };
+  }, []);
 
   // Wake up backend on mount
   useEffect(() => {
@@ -85,14 +108,13 @@ export const LearningCard = ({ word, onNext, onPrevious }: LearningCardProps) =>
     setIsRecording(false);
     setIsReadyToSubmit(false);
     setCountdown(null);
-
+  
+    // If there's a live camera feed, keep it running
     if (videoRef.current) {
-      videoRef.current.src = "";
-      if (videoRef.current.srcObject) {
-        const stream = videoRef.current.srcObject as MediaStream;
-        stream.getTracks().forEach(track => track.stop());
+      if (videoFile) {
+        videoRef.current.src = "";
+        videoRef.current.srcObject = null;
       }
-      videoRef.current.srcObject = null;
     }
   };
 
@@ -101,6 +123,7 @@ export const LearningCard = ({ word, onNext, onPrevious }: LearningCardProps) =>
     resetState();
   }, [word]);
 
+  
   const runInference = async (videoBlob: Blob) => {
     setFeedback("processing");
     toast.info("Sending video for analysis...");
@@ -170,28 +193,33 @@ export const LearningCard = ({ word, onNext, onPrevious }: LearningCardProps) =>
     toast.info("Video uploaded. Review and submit.");
   };
 
-  const startRecording = async () => {
-    resetState();
-    setIsReadyToSubmit(false);
-
+  const startCamera = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
       if (videoRef.current) videoRef.current.srcObject = stream;
+    } catch {
+      toast.error("Could not access camera.");
+    }
+  };
 
+  const startRecording = async () => {
+    resetState();
+    setIsReadyToSubmit(false);
+    await startCamera();
+
+    try {
+      const stream = videoRef.current?.srcObject as MediaStream;
       const mediaRecorder = new MediaRecorder(stream);
       mediaRecorderRef.current = mediaRecorder;
       chunksRef.current = [];
 
-      mediaRecorder.ondataavailable = (e) => {
-        if (e.data.size > 0) chunksRef.current.push(e.data);
-      };
-
+      mediaRecorder.ondataavailable = (e) => e.data.size > 0 && chunksRef.current.push(e.data);
       mediaRecorder.onstop = () => {
         const blob = new Blob(chunksRef.current, { type: "video/webm" });
         setVideoFile({ blob, url: URL.createObjectURL(blob) });
         setIsRecording(false);
         setIsReadyToSubmit(true);
-        stream.getTracks().forEach(track => track.stop());
+        stream.getTracks().forEach((t) => t.stop());
         if (videoRef.current) videoRef.current.srcObject = null;
         toast.info("Recording complete. Review or submit.");
       };
@@ -216,24 +244,46 @@ export const LearningCard = ({ word, onNext, onPrevious }: LearningCardProps) =>
   };
 
   const stopRecording = () => mediaRecorderRef.current?.stop();
-  const handleRetry = () => resetState();
+
+  const handleRetry = async () => {
+    if (videoRef.current) {
+      videoRef.current.pause();
+      videoRef.current.currentTime = 0;
+    }
+    resetState();
+    await startCamera(); // ✅ turn camera back on
+    toast.info("Camera ready for re-recording!");
+  };
+
+  const handlePlaybackToggle = () => {
+    const video = videoRef.current;
+    if (!video) return;
+    if (isPlaying) {
+      video.pause();
+      setIsPlaying(false);
+    } else {
+      video.play();
+      setIsPlaying(true);
+      video.onended = () => setIsPlaying(false);
+    }
+  };
 
   const isPredicting = feedback === "processing";
-  const isVideoReady = !!videoFile && !isRecording && !isPredicting;
   const isIdle = feedback === "idle" && !isRecording;
+
+
 
   return (
     <Card className="w-full max-w-2xl shadow-xl bg-[hsl(var(--card))] text-[hsl(var(--card-foreground))]">
       <CardContent className="pt-6 space-y-6">
-        {/* Video display */}
+        {/* VIDEO AREA */}
         <div className="relative aspect-video bg-[hsl(var(--muted))] border-2 border-dashed border-[hsl(var(--border))] rounded-xl overflow-hidden shadow-inner">
           <video
             ref={videoRef}
-            autoPlay={!videoFile?.url}
-            muted
+            autoPlay={!videoFile}
+            muted={!videoFile}
             playsInline
-            controls={isVideoReady}
-            src={videoFile?.url || undefined}
+            src={videoFile ? videoFile.url : undefined}
             className="w-full h-full object-cover"
           />
 
@@ -267,33 +317,33 @@ export const LearningCard = ({ word, onNext, onPrevious }: LearningCardProps) =>
           )}
 
           {feedback === "correct" && (
-            <div className="absolute inset-0 bg-[hsl(var(--success))/90] flex items-center justify-center animate-in fade-in duration-500">
+            <div className="absolute inset-0 bg-[hsl(var(--success))/90] flex items-center justify-center">
               <CheckCircle className="h-24 w-24 text-[hsl(var(--success-foreground))]" />
             </div>
           )}
 
           {feedback === "incorrect" && (
-            <div className="absolute inset-0 bg-[hsl(var(--destructive))/90] flex items-center justify-center animate-in fade-in duration-500">
+            <div className="absolute inset-0 bg-[hsl(var(--destructive))/90] flex items-center justify-center">
               <XCircle className="h-24 w-24 text-[hsl(var(--destructive-foreground))]" />
             </div>
           )}
         </div>
 
-        {/* Controls */}
+        {/* CONTROLS */}
         <div className="space-y-4">
           {(isIdle || feedback === "incorrect") && !isReadyToSubmit && (
             <div className="flex flex-col sm:flex-row gap-4">
               <Button
                 onClick={() => fileInputRef.current?.click()}
                 disabled={isPredicting}
-                className="flex-1 text-lg py-6 bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))] hover:brightness-90 transition flex items-center justify-center gap-2"
+                className="flex-1 text-lg py-6 bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))] flex items-center justify-center gap-2"
               >
                 <Upload className="h-5 w-5" /> Upload Video
               </Button>
               <Button
                 onClick={startRecording}
                 disabled={isPredicting}
-                className="flex-1 text-lg py-6 bg-[hsl(var(--accent))] text-[hsl(var(--accent-foreground))] hover:bg-[hsl(190,29%,28%)] transition flex items-center justify-center gap-2"
+                className="flex-1 text-lg py-6 bg-[hsl(var(--accent))] text-[hsl(var(--accent-foreground))] flex items-center justify-center gap-2"
               >
                 <Camera className="h-5 w-5" /> Start Recording
               </Button>
@@ -304,26 +354,43 @@ export const LearningCard = ({ word, onNext, onPrevious }: LearningCardProps) =>
 
           <div className="flex flex-wrap justify-center gap-4 mt-4">
             {isRecording && (
-              <Button size="lg" onClick={stopRecording} className="text-lg px-8 py-6 bg-[hsl(var(--destructive))] text-[hsl(var(--destructive-foreground))] shadow-xl flex items-center justify-center gap-2">
+              <Button
+                size="lg"
+                onClick={stopRecording}
+                className="text-lg px-8 py-6 bg-[hsl(var(--destructive))] text-[hsl(var(--destructive-foreground))]"
+              >
                 <StopCircle className="h-5 w-5" /> Stop Recording
               </Button>
             )}
 
             {isReadyToSubmit && (
               <>
-                <Button size="lg" onClick={handleRetry} variant="outline" className="text-lg px-8 py-6 border-[hsl(var(--border))] text-[hsl(var(--foreground))] hover:bg-[hsl(var(--muted))] flex items-center justify-center gap-2">
+                <Button
+                  size="lg"
+                  onClick={handlePlaybackToggle}
+                  variant="outline"
+                  className="text-lg px-8 py-6 flex items-center justify-center gap-2"
+                >
+                  {isPlaying ? <><Pause className="h-5 w-5" /> Pause</> : <><Play className="h-5 w-5" /> Replay</>}
+                </Button>
+
+                <Button
+                  size="lg"
+                  onClick={handleRetry}
+                  variant="outline"
+                  className="text-lg px-8 py-6 flex items-center justify-center gap-2"
+                >
                   <Camera className="h-5 w-5" /> Re-record
                 </Button>
-                <Button size="lg" onClick={() => videoFile && runInference(videoFile.blob)} className="text-lg px-8 py-6 bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))] shadow-xl hover:brightness-90 flex items-center justify-center gap-2">
-                  <Play className="h-5 w-5" /> Submit
+
+                <Button
+                  size="lg"
+                  onClick={() => videoFile && runInference(videoFile.blob)}
+                  className="text-lg px-8 py-6 bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))]"
+                >
+                  <CheckCircle className="h-5 w-5" /> Submit
                 </Button>
               </>
-            )}
-
-            {feedback === "incorrect" && (
-              <Button size="lg" onClick={handleRetry} variant="outline" className="text-lg px-8 py-6 border-[hsl(var(--destructive))] text-[hsl(var(--destructive))] hover:bg-[hsl(var(--muted))] flex items-center justify-center gap-2">
-                <XCircle className="h-5 w-5" /> Try Again
-              </Button>
             )}
           </div>
         </div>
