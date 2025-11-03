@@ -1,32 +1,14 @@
-import { useState } from "react";
 import { Hero } from "@/components/Hero";
-import { LearningCard } from "@/components/LearningCard";
-
-// Sample words for demo (can be replaced with actual word list later)
-const words = ["3", "13", "38", "7", "62"];
+import { useNavigate } from "react-router-dom";
 
 const Index = () => {
-  const [isLearning, setIsLearning] = useState(false);
-  const [currentWordIndex, setCurrentWordIndex] = useState(0);
+  const navigate = useNavigate();
 
   const handleStartLearning = () => {
-    setIsLearning(true);
+    navigate("/learn");
   };
 
-  const handleNext = () => {
-    setCurrentWordIndex((prev) => (prev + 1) % words.length);
-  };
-
-  if (!isLearning) {
-    return <Hero onStartLearning={handleStartLearning} />;
-  }
-
-  return (
-    <LearningCard 
-      word={words[currentWordIndex]} 
-      onNext={handleNext}
-    />
-  );
+  return <Hero onStartLearning={handleStartLearning} />;
 };
 
 export default Index;
