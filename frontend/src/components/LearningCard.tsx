@@ -29,7 +29,7 @@ export const getWordToIdMap = () => ({
   "equal": "14",
   "sorry": "15",
   "age": "20",
-  "how many": "22",
+  //"how many": "22",
   "day": "23",
   "please?": "43",
   "study": "48",
@@ -67,24 +67,8 @@ export const LearningCard = ({ word, onNext, onPrevious }: LearningCardProps) =>
 
   // Start camera on mount
   useEffect(() => {
-    const startCamera = async () => {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-        if (videoRef.current) videoRef.current.srcObject = stream;
-      } catch (err) {
-        toast.error("Camera access denied or unavailable.");
-        console.error(err);
-      }
-    };
     startCamera();
-  
-    // Stop camera only when component unmounts
-    return () => {
-      if (videoRef.current?.srcObject) {
-        const stream = videoRef.current.srcObject as MediaStream;
-        stream.getTracks().forEach(track => track.stop());
-      }
-    };
+    return () => stopCamera();
   }, []);
 
   // Wake up backend on mount
@@ -101,6 +85,23 @@ export const LearningCard = ({ word, onNext, onPrevious }: LearningCardProps) =>
     wakeUpBackend();
   }, []);
 
+  const startCamera = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      if (videoRef.current) videoRef.current.srcObject = stream;
+    } catch {
+      toast.error("Could not access camera.");
+    }
+  };
+
+  const stopCamera = () => {
+    if (videoRef.current?.srcObject) {
+      const stream = videoRef.current.srcObject as MediaStream;
+      stream.getTracks().forEach(track => track.stop());
+      if (videoRef.current) videoRef.current.srcObject = null;
+    }
+  };
+
   // Reset all state
   const resetState = () => {
     setFeedback("idle");
@@ -108,67 +109,53 @@ export const LearningCard = ({ word, onNext, onPrevious }: LearningCardProps) =>
     setIsRecording(false);
     setIsReadyToSubmit(false);
     setCountdown(null);
-  
-    // If there's a live camera feed, keep it running
-    if (videoRef.current) {
-      if (videoFile) {
-        videoRef.current.src = "";
-        videoRef.current.srcObject = null;
-      }
-    }
   };
 
   // Reset when word changes
   useEffect(() => {
     resetState();
+    startCamera();
   }, [word]);
 
-  
   const runInference = async (videoBlob: Blob) => {
     setFeedback("processing");
     toast.info("Sending video for analysis...");
-  
+
     const expectedClassLabel = WORD_TO_ID_MAP[word.toLowerCase()];
     if (!expectedClassLabel) {
       setFeedback("incorrect");
       toast.error(`Word "${word}" is not mapped to a class ID.`);
       return;
     }
-  
+
     try {
       const formData = new FormData();
       formData.append("video", videoBlob, "sign_video.webm");
-  
+
       const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
-  
+
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 120000);
-  
+
       const response = await fetch(`${API_URL}/predict`, {
         method: "POST",
         body: formData,
         signal: controller.signal,
         credentials: "include",
       });
-  
+
       clearTimeout(timeoutId);
-  
+
       if (!response.ok) throw new Error(`Request failed: ${response.status}`);
-  
+
       const result = await response.json();
-  
-      // --- LOGGING FOR DEBUGGING ---
-      console.log("Raw model output:", result);
-  
       if (!result.success) throw new Error(result.error || "Prediction failed.");
-  
+
       const predictedClassLabel = String(result.predicted_class);
       const isCorrect = predictedClassLabel === expectedClassLabel;
       const predictedWord = ID_TO_WORD_MAP[predictedClassLabel] || "Unknown";
       const expectedWord = ID_TO_WORD_MAP[expectedClassLabel] || "Unknown";
-  
-      console.log(`Expected: ${expectedWord} (${expectedClassLabel}), Predicted: ${predictedWord} (${predictedClassLabel})`);
-  
+
       setFeedback(isCorrect ? "correct" : "incorrect");
       toast[isCorrect ? "success" : "error"](
         isCorrect
@@ -181,9 +168,8 @@ export const LearningCard = ({ word, onNext, onPrevious }: LearningCardProps) =>
       toast.error(error.name === 'AbortError' ? "Request timed out." : "Error during prediction.");
     }
   };
-  
 
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -193,15 +179,6 @@ export const LearningCard = ({ word, onNext, onPrevious }: LearningCardProps) =>
     toast.info("Video uploaded. Review and submit.");
   };
 
-  const startCamera = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-      if (videoRef.current) videoRef.current.srcObject = stream;
-    } catch {
-      toast.error("Could not access camera.");
-    }
-  };
-
   const startRecording = async () => {
     resetState();
     setIsReadyToSubmit(false);
@@ -209,6 +186,8 @@ export const LearningCard = ({ word, onNext, onPrevious }: LearningCardProps) =>
 
     try {
       const stream = videoRef.current?.srcObject as MediaStream;
+      if (!stream) throw new Error("Camera stream unavailable");
+
       const mediaRecorder = new MediaRecorder(stream);
       mediaRecorderRef.current = mediaRecorder;
       chunksRef.current = [];
@@ -219,8 +198,7 @@ export const LearningCard = ({ word, onNext, onPrevious }: LearningCardProps) =>
         setVideoFile({ blob, url: URL.createObjectURL(blob) });
         setIsRecording(false);
         setIsReadyToSubmit(true);
-        stream.getTracks().forEach((t) => t.stop());
-        if (videoRef.current) videoRef.current.srcObject = null;
+        stopCamera();
         toast.info("Recording complete. Review or submit.");
       };
 
@@ -246,12 +224,8 @@ export const LearningCard = ({ word, onNext, onPrevious }: LearningCardProps) =>
   const stopRecording = () => mediaRecorderRef.current?.stop();
 
   const handleRetry = async () => {
-    if (videoRef.current) {
-      videoRef.current.pause();
-      videoRef.current.currentTime = 0;
-    }
     resetState();
-    await startCamera(); // ✅ turn camera back on
+    await startCamera();
     toast.info("Camera ready for re-recording!");
   };
 
@@ -270,8 +244,6 @@ export const LearningCard = ({ word, onNext, onPrevious }: LearningCardProps) =>
 
   const isPredicting = feedback === "processing";
   const isIdle = feedback === "idle" && !isRecording;
-
-
 
   return (
     <Card className="w-full max-w-2xl shadow-xl bg-[hsl(var(--card))] text-[hsl(var(--card-foreground))]">
@@ -354,11 +326,7 @@ export const LearningCard = ({ word, onNext, onPrevious }: LearningCardProps) =>
 
           <div className="flex flex-wrap justify-center gap-4 mt-4">
             {isRecording && (
-              <Button
-                size="lg"
-                onClick={stopRecording}
-                className="text-lg px-8 py-6 bg-[hsl(var(--destructive))] text-[hsl(var(--destructive-foreground))]"
-              >
+              <Button size="lg" onClick={stopRecording} className="text-lg px-8 py-6 bg-[hsl(var(--destructive))] text-[hsl(var(--destructive-foreground))]">
                 <StopCircle className="h-5 w-5" /> Stop Recording
               </Button>
             )}

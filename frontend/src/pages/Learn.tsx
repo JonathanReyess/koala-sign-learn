@@ -7,7 +7,7 @@ import { useNavigate } from "react-router-dom";
 // Replace the array export with a getter function
 export const getWords = () => [
   "hi", "meet", "me", "see", "name", "thank", "equal", "sorry",
-  "age", "how many", "day", "please?",
+  "age", "day", "please?",
   "study", "human", "now", "test", "yet", "finally",
   "dinner", "experience", "invite", "food", "want", "good", "care"
 ];
