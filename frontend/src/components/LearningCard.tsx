@@ -61,24 +61,27 @@ export const LearningCard = ({ word, onNext, onPrevious }: LearningCardProps) =>
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
-
   const isMobile = useIsMobile();
 
-  // Wake up backend on component mount
+  const ID_TO_WORD_MAP: { [id: string]: string } = Object.fromEntries(
+    Object.entries(WORD_TO_ID_MAP).map(([word, id]) => [id, word])
+  );
+
+  // Wake up backend on mount
   useEffect(() => {
     const wakeUpBackend = async () => {
       try {
         const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
         await fetch(`${API_URL}/`);
         console.log('Backend is ready');
-      } catch (error) {
+      } catch {
         console.log('Waking up backend...');
       }
     };
     wakeUpBackend();
   }, []);
 
-  // Reset all recording/video/feedback state
+  // Reset all state
   const resetState = () => {
     setFeedback("idle");
     setVideoFile(null);
@@ -96,7 +99,7 @@ export const LearningCard = ({ word, onNext, onPrevious }: LearningCardProps) =>
     }
   };
 
-  // Reset state when word changes
+  // Reset when word changes
   useEffect(() => {
     resetState();
   }, [word]);
@@ -108,7 +111,7 @@ export const LearningCard = ({ word, onNext, onPrevious }: LearningCardProps) =>
     const expectedClassLabel = WORD_TO_ID_MAP[word.toLowerCase()];
     if (!expectedClassLabel) {
       setFeedback("incorrect");
-      toast.error(`Error: Word "${word}" is not mapped to a class ID.`);
+      toast.error(`Word "${word}" is not mapped to a class ID.`);
       return;
     }
 
@@ -118,7 +121,6 @@ export const LearningCard = ({ word, onNext, onPrevious }: LearningCardProps) =>
 
       const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
-      // Add timeout for sleeping backend
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 120000);
 
@@ -126,46 +128,42 @@ export const LearningCard = ({ word, onNext, onPrevious }: LearningCardProps) =>
         method: "POST",
         body: formData,
         signal: controller.signal,
-        credentials: "include", // ✅ required
+        credentials: "include",
       });
 
       clearTimeout(timeoutId);
 
-      if (!response.ok) throw new Error(`Request failed with status ${response.status}`);
+      if (!response.ok) throw new Error(`Request failed: ${response.status}`);
 
       const result = await response.json();
       if (!result.success) throw new Error(result.error || "Prediction failed.");
 
       const predictedClassLabel = String(result.predicted_class);
       const isCorrect = predictedClassLabel === expectedClassLabel;
+      const predictedWord = ID_TO_WORD_MAP[predictedClassLabel] || "Unknown";
+      const expectedWord = ID_TO_WORD_MAP[expectedClassLabel] || "Unknown";
 
       setFeedback(isCorrect ? "correct" : "incorrect");
       toast[isCorrect ? "success" : "error"](
         isCorrect
-          ? "Great job! That's correct!"
-          : `Incorrect. Model predicted "${predictedClassLabel}". Expected "${expectedClassLabel}".`
+          ? `Great job! You signed "${predictedWord}" correctly!`
+          : `Incorrect. Model predicted "${predictedWord}", expected "${expectedWord}".`
       );
     } catch (error: any) {
       console.error(error);
       setFeedback("incorrect");
-      if (error.name === 'AbortError') {
-        toast.error("Request timed out. The server might be sleeping. Please try again in a moment.");
-      } else {
-        toast.error("Error during model inference. Please try again.");
-      }
+      toast.error(error.name === 'AbortError' ? "Request timed out." : "Error during prediction.");
     }
   };
 
-  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
     if (!file) return;
 
     resetState();
-    
-    const videoUrl = URL.createObjectURL(file);
-    setVideoFile({ blob: file, url: videoUrl });
+    setVideoFile({ blob: file, url: URL.createObjectURL(file) });
     setIsReadyToSubmit(true);
-    toast.info("Video uploaded. Review and submit when ready.");
+    toast.info("Video uploaded. Review and submit.");
   };
 
   const startRecording = async () => {
@@ -189,9 +187,9 @@ export const LearningCard = ({ word, onNext, onPrevious }: LearningCardProps) =>
         setVideoFile({ blob, url: URL.createObjectURL(blob) });
         setIsRecording(false);
         setIsReadyToSubmit(true);
-        stream.getTracks().forEach((track) => track.stop());
+        stream.getTracks().forEach(track => track.stop());
         if (videoRef.current) videoRef.current.srcObject = null;
-        toast.info("Recording complete. Review or submit your video.");
+        toast.info("Recording complete. Review or submit.");
       };
 
       let count = 3;
@@ -207,8 +205,7 @@ export const LearningCard = ({ word, onNext, onPrevious }: LearningCardProps) =>
           toast.info("Recording started!");
         }
       }, 1000);
-    } catch (error) {
-      console.error(error);
+    } catch {
       toast.error("Could not access camera.");
       resetState();
     }
@@ -222,149 +219,111 @@ export const LearningCard = ({ word, onNext, onPrevious }: LearningCardProps) =>
   const isIdle = feedback === "idle" && !isRecording;
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center px-4 py-8 bg-[hsl(var(--background))] relative">
+    <Card className="w-full max-w-2xl shadow-xl bg-[hsl(var(--card))] text-[hsl(var(--card-foreground))]">
+      <CardContent className="pt-6 space-y-6">
+        {/* Video display */}
+        <div className="relative aspect-video bg-[hsl(var(--muted))] border-2 border-dashed border-[hsl(var(--border))] rounded-xl overflow-hidden shadow-inner">
+          <video
+            ref={videoRef}
+            autoPlay={!videoFile?.url}
+            muted
+            playsInline
+            controls={isVideoReady}
+            src={videoFile?.url || undefined}
+            className="w-full h-full object-cover"
+          />
 
-      {/* Navigation & Word */}
-      <div className="flex items-center justify-between w-full max-w-2xl mb-8">
-        <button
-          onClick={() => {
-            onPrevious();
-            resetState();
-          }}
-          className="p-2 hover:opacity-80"
-        >
-          <svg
-            fill="#b6d3b7"
-            viewBox="0 0 32 32"
-            className="w-10 h-10"
-            style={{ transform: "scaleX(-1)" }}
-          >
-            <path d="M25.468,14.508l-20.967,-0.008c-0.828,-0  -1.501,0.672 -1.501,1.499c-0,0.828 0.672,1.501 1.499,1.501l21.125,0.009c-0.107,0.159 -0.234,0.306 -0.377,0.439c-3.787,3.502 -9.68,8.951 -9.68,8.951c-0.608,0.562 -0.645,1.511 -0.083,2.119c0.562,0.608 1.512,0.645 2.12,0.083c-0,0 5.892,-5.448 9.68,-8.95c1.112,-1.029 1.751,-2.47 1.766,-3.985c0.014,-1.515 -0.596,-2.968 -1.688,-4.018l-9.591,-9.221c-0.596,-0.574 -1.547,-0.556 -2.121,0.041c-0.573,0.597 -0.555,1.547 0.042,2.121l9.591,9.221c0.065,0.063 0.127,0.129 0.185,0.198Z"/>
-          </svg>
-        </button>
-
-        <h2 className="text-5xl font-extrabold text-[hsl(var(--primary))]">{word}</h2>
-
-        <button
-          onClick={() => {
-            onNext();
-            resetState();
-          }}
-          className="p-2 hover:opacity-80"
-        >
-          <svg fill="#b6d3b7" viewBox="0 0 32 32" className="w-10 h-10">
-            <path d="M25.468,14.508l-20.967,-0.008c-0.828,-0  -1.501,0.672 -1.501,1.499c-0,0.828 0.672,1.501 1.499,1.501l21.125,0.009c-0.107,0.159 -0.234,0.306 -0.377,0.439c-3.787,3.502 -9.68,8.951 -9.68,8.951c-0.608,0.562 -0.645,1.511 -0.083,2.119c0.562,0.608 1.512,0.645 2.12,0.083c-0,0 5.892,-5.448 9.68,-8.95c1.112,-1.029 1.751,-2.47 1.766,-3.985c0.014,-1.515 -0.596,-2.968 -1.688,-4.018l-9.591,-9.221c-0.596,-0.574 -1.547,-0.556 -2.121,0.041c-0.573,0.597 -0.555,1.547 0.042,2.121l9.591,9.221c0.065,0.063 0.127,0.129 0.185,0.198Z"/>
-          </svg>
-        </button>
-      </div>
-
-      <Card className="w-full max-w-2xl shadow-xl bg-[hsl(var(--card))] text-[hsl(var(--card-foreground))]">
-        <CardContent className="pt-6 space-y-6">
-
-          {/* Video */}
-          <div className="relative aspect-video bg-[hsl(var(--muted))] border-2 border-dashed border-[hsl(var(--border))] rounded-xl overflow-hidden shadow-inner">
-            <video
-              ref={videoRef}
-              autoPlay={!videoFile?.url}
-              muted
-              playsInline
-              controls={isVideoReady}
-              src={videoFile?.url || undefined}
-              className="w-full h-full object-cover"
-            />
-
-            {countdown !== null && (
-              <div className="absolute inset-0 flex items-center justify-center bg-black/50 z-50">
-                <span className="text-white text-6xl font-bold animate-pulse">{countdown}</span>
-              </div>
-            )}
-
-            {isIdle && (
-              <div className="absolute inset-0 flex items-center justify-center bg-[hsl(var(--muted))/70]">
-                <Camera className="h-16 w-16 text-[hsl(var(--muted-foreground))]" />
-              </div>
-            )}
-
-            {isRecording && (
-              <div className="absolute top-4 left-4 flex items-center px-3 py-1 bg-[hsl(var(--destructive))] rounded-full shadow-lg">
-                <span className="relative flex h-3 w-3">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-                  <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500"></span>
-                </span>
-                <span className="ml-2 text-sm font-semibold text-[hsl(var(--destructive-foreground))]">Recording...</span>
-              </div>
-            )}
-
-            {feedback === "processing" && (
-              <div className="absolute inset-0 bg-gray-800/90 flex flex-col items-center justify-center animate-pulse">
-                <Loader className="h-10 w-10 text-white animate-spin mb-3" />
-                <p className="text-white text-xl font-semibold">Analyzing Sign...</p>
-              </div>
-            )}
-
-            {feedback === "correct" && (
-              <div className="absolute inset-0 bg-[hsl(var(--success))/90] flex items-center justify-center animate-in fade-in duration-500">
-                <CheckCircle className="h-24 w-24 text-[hsl(var(--success-foreground))]" />
-              </div>
-            )}
-            {feedback === "incorrect" && (
-              <div className="absolute inset-0 bg-[hsl(var(--destructive))/90] flex items-center justify-center animate-in fade-in duration-500">
-                <XCircle className="h-24 w-24 text-[hsl(var(--destructive-foreground))]" />
-              </div>
-            )}
-          </div>
-
-          {/* Controls */}
-          <div className="space-y-4">
-            {(isIdle || feedback === "incorrect") && !isReadyToSubmit && (
-              <div className="flex flex-col sm:flex-row gap-4">
-                <Button
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={isPredicting}
-                  className="flex-1 text-lg py-6 bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))] hover:brightness-90 transition"
-                >
-                  <Upload className="mr-2 h-5 w-5" /> Upload Video
-                </Button>
-                <Button
-                  onClick={startRecording}
-                  disabled={isPredicting}
-                  className="flex-1 text-lg py-6 bg-[hsl(var(--accent))] text-[hsl(var(--accent-foreground))] hover:bg-[hsl(190,29%,28%)] transition"
-                >
-                  <Camera className="mr-2 h-5 w-5" /> Start Recording
-                </Button>
-              </div>
-            )}
-
-            <input ref={fileInputRef} type="file" accept="video/*" onChange={handleFileUpload} className="hidden" />
-
-            <div className="flex flex-wrap justify-center gap-4 mt-4">
-              {isRecording && (
-                <Button size="lg" onClick={stopRecording} className="text-lg px-8 py-6 bg-[hsl(var(--destructive))] text-[hsl(var(--destructive-foreground))] shadow-xl">
-                  <StopCircle className="mr-2 h-5 w-5" /> Stop Recording
-                </Button>
-              )}
-
-              {isReadyToSubmit && (
-                <>
-                  <Button size="lg" onClick={handleRetry} variant="outline" className="text-lg px-8 py-6 border-[hsl(var(--border))] text-[hsl(var(--foreground))] hover:bg-[hsl(var(--muted))]">
-                    <Camera className="mr-2 h-5 w-5" /> Re-record
-                  </Button>
-                  <Button size="lg" onClick={() => videoFile && runInference(videoFile.blob)} className="text-lg px-8 py-6 bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))] shadow-xl hover:brightness-90">
-                    <Play className="mr-2 h-5 w-5" /> Submit
-                  </Button>
-                </>
-              )}
-
-              {feedback === "incorrect" && (
-                <Button size="lg" onClick={handleRetry} variant="outline" className="text-lg px-8 py-6 border-[hsl(var(--destructive))] text-[hsl(var(--destructive))] hover:bg-[hsl(var(--muted))]">
-                  <XCircle className="mr-2 h-5 w-5" /> Try Again
-                </Button>
-              )}
+          {countdown !== null && (
+            <div className="absolute inset-0 flex items-center justify-center bg-black/50 z-50">
+              <span className="text-white text-6xl font-bold animate-pulse">{countdown}</span>
             </div>
-          </div>
+          )}
 
-        </CardContent>
-      </Card>
-    </div>
+          {isIdle && (
+            <div className="absolute inset-0 flex items-center justify-center bg-[hsl(var(--muted))/70]">
+              <Camera className="h-16 w-16 text-[hsl(var(--muted-foreground))]" />
+            </div>
+          )}
+
+          {isRecording && (
+            <div className="absolute top-4 left-4 flex items-center px-3 py-1 bg-[hsl(var(--destructive))] rounded-full shadow-lg">
+              <span className="relative flex h-3 w-3">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500"></span>
+              </span>
+              <span className="ml-2 text-sm font-semibold text-[hsl(var(--destructive-foreground))]">Recording...</span>
+            </div>
+          )}
+
+          {feedback === "processing" && (
+            <div className="absolute inset-0 bg-gray-800/90 flex flex-col items-center justify-center animate-pulse">
+              <Loader className="h-10 w-10 text-white animate-spin mb-3" />
+              <p className="text-white text-xl font-semibold">Analyzing Sign...</p>
+            </div>
+          )}
+
+          {feedback === "correct" && (
+            <div className="absolute inset-0 bg-[hsl(var(--success))/90] flex items-center justify-center animate-in fade-in duration-500">
+              <CheckCircle className="h-24 w-24 text-[hsl(var(--success-foreground))]" />
+            </div>
+          )}
+
+          {feedback === "incorrect" && (
+            <div className="absolute inset-0 bg-[hsl(var(--destructive))/90] flex items-center justify-center animate-in fade-in duration-500">
+              <XCircle className="h-24 w-24 text-[hsl(var(--destructive-foreground))]" />
+            </div>
+          )}
+        </div>
+
+        {/* Controls */}
+        <div className="space-y-4">
+          {(isIdle || feedback === "incorrect") && !isReadyToSubmit && (
+            <div className="flex flex-col sm:flex-row gap-4">
+              <Button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isPredicting}
+                className="flex-1 text-lg py-6 bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))] hover:brightness-90 transition flex items-center justify-center gap-2"
+              >
+                <Upload className="h-5 w-5" /> Upload Video
+              </Button>
+              <Button
+                onClick={startRecording}
+                disabled={isPredicting}
+                className="flex-1 text-lg py-6 bg-[hsl(var(--accent))] text-[hsl(var(--accent-foreground))] hover:bg-[hsl(190,29%,28%)] transition flex items-center justify-center gap-2"
+              >
+                <Camera className="h-5 w-5" /> Start Recording
+              </Button>
+            </div>
+          )}
+
+          <input ref={fileInputRef} type="file" accept="video/*" onChange={handleFileUpload} className="hidden" />
+
+          <div className="flex flex-wrap justify-center gap-4 mt-4">
+            {isRecording && (
+              <Button size="lg" onClick={stopRecording} className="text-lg px-8 py-6 bg-[hsl(var(--destructive))] text-[hsl(var(--destructive-foreground))] shadow-xl flex items-center justify-center gap-2">
+                <StopCircle className="h-5 w-5" /> Stop Recording
+              </Button>
+            )}
+
+            {isReadyToSubmit && (
+              <>
+                <Button size="lg" onClick={handleRetry} variant="outline" className="text-lg px-8 py-6 border-[hsl(var(--border))] text-[hsl(var(--foreground))] hover:bg-[hsl(var(--muted))] flex items-center justify-center gap-2">
+                  <Camera className="h-5 w-5" /> Re-record
+                </Button>
+                <Button size="lg" onClick={() => videoFile && runInference(videoFile.blob)} className="text-lg px-8 py-6 bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))] shadow-xl hover:brightness-90 flex items-center justify-center gap-2">
+                  <Play className="h-5 w-5" /> Submit
+                </Button>
+              </>
+            )}
+
+            {feedback === "incorrect" && (
+              <Button size="lg" onClick={handleRetry} variant="outline" className="text-lg px-8 py-6 border-[hsl(var(--destructive))] text-[hsl(var(--destructive))] hover:bg-[hsl(var(--muted))] flex items-center justify-center gap-2">
+                <XCircle className="h-5 w-5" /> Try Again
+              </Button>
+            )}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
   );
 };
