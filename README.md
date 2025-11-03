@@ -7,10 +7,11 @@ This is the repository for the **Koala Sign Language (KSL) recognition project**
 
 ### Project Overview
 
-The core of this project is a dynamic sign language recognition model trained on skeleton-based features extracted from videos. The system addresses the need for accessible and portable KSL learning tools by utilizing a vision-based approach that can run on any camera-equipped device.
+Learning platform built on top of a Korean Sign Language recognition model trained on skeleton-based features extracted from videos. 
 
-The model architecture is based on the principles outlined in the paper ["Dynamic Korean Sign Language Recognition Using Pose Estimation Based and Attention‑Based Neural Network"](https://ieeexplore.ieee.org/document/10360810) by Jungpil Shin *et al.* (IEEE Access, Vol. 11, pp. 143501–143513, 2023, DOI: [10.1109/ACCESS.2023.3343404](https://doi.org/10.1109/ACCESS.2023.3343404)).
+This project addresses the need for accessible KSL learning tools and resources by utilizing a vision-based approach that can run on any camera-equipped device.
 
+The model architecture is based on the principles outlined in the paper ["Dynamic Korean Sign Language Recognition Using Pose Estimation Based and Attention‑Based Neural Network"](https://ieeexplore.ieee.org/document/10360810) by Jungpil Shin et al. (IEEE Access, Volume: 11, Date of Publication: 15 December 2023, DOI: 10.1109/ACCESS.2023.3343404).
 
 ---
 
@@ -24,14 +25,9 @@ The model architecture is based on the principles outlined in the paper ["Dynami
 
 ### Jupyter Notebook
 
-A detailed **Jupyter Notebook** is included in the [`notebook/`](notebook/) folder. The notebook provides a full walkthrough of processing, feature extraction, and model training:
+A detailed **Jupyter Notebook** is included in the [`notebook/`](notebook/) folder. 
 
-* **Environment Setup:** Installs required packages (`torch`, `numpy`, `scikit-learn`, `mediapipe`, `opencv`, etc.) and configures GPU support in Google Colab.
-* **Data Preparation:** Loads KSL77 videos, extracts **47 joint skeleton points** per frame using **MediaPipe Holistic**, and saves processed sequences as `.pkl` files.
-* **Dataset & DataLoader:** Converts features and labels into PyTorch `Dataset` and `DataLoader` objects with train/validation/test splits and optional data augmentation.
-* **Model Definition:** Implements the `PoseCNN_LSTM_Attn` network with CNN, LSTM, and Attention layers.
-* **Training & Evaluation:** Trains the model with early stopping, evaluates test accuracy, generates classification reports, and visualizes the confusion matrix.
-* **Model Saving:** Saves the trained model for inference in the FastAPI backend.
+The notebook provides a full walkthrough of video preprocessing, feature extraction, and model training, and was run on Google Colab using an NVIDIA T4 GPU.
 
 > **Dataset Source:** Original KSL77 dataset and labels obtained from [Yangseung/KSL](https://github.com/Yangseung/KSL).
 
@@ -43,8 +39,8 @@ A detailed **Jupyter Notebook** is included in the [`notebook/`](notebook/) fold
 | :--------------------- | :--------------------------------- | :-------------------------------------------------------------------------------------------- |
 | **Model**              | PyTorch, NumPy, Scikit-learn       | Trained on KSL77 dataset, achieving **86.18% test accuracy**.                                 |
 | **Feature Extraction** | MediaPipe Holistic, OpenCV (`cv2`) | Extracts 47 3D joint coordinates across a fixed sequence length (32 frames).                  |
-| **Backend API**        | Python, **FastAPI**                | Serves the trained PyTorch model and handles video uploads and preprocessing.                 |
-| **Frontend**           | React, TypeScript, Tailwind CSS    | Provides a user-friendly interface for recording/uploading videos and displaying AI feedback. |
+| **Backend API**        | Python, FastAPI                | Serves the trained PyTorch model and handles video uploads and preprocessing.                 |
+| **Frontend**           | Vite, React, TypeScript, Tailwind CSS    | Provides a user-friendly interface for recording/uploading videos and displaying AI feedback. |
 
 ---
 
@@ -70,8 +66,8 @@ This project requires **Python** for the backend and **Node.js/npm** for the fro
 1. **Clone the repository:**
 
    ```bash
-   git clone [repository-url]
-   cd [repository-folder]/backend
+   git clone https://github.com/JonathanReyess/koala-sign-learn.git
+   cd koala-sign-learn/backend
    ```
 2. **Install dependencies:**
 
@@ -79,7 +75,7 @@ This project requires **Python** for the backend and **Node.js/npm** for the fro
    pip install -r requirements.txt
    ```
 
-   > Note: The model file (`best_model.pt`) and data file (`KSL77_joint_stream_47pt.pkl`) are required for the application to run.
+   > Note: The model file (`best_model.pt`) is required for the application to run locally.
 3. **Run the API:**
 
    ```bash
@@ -93,7 +89,7 @@ This project requires **Python** for the backend and **Node.js/npm** for the fro
 1. **Navigate to the frontend directory:**
 
    ```bash
-   cd [repository-folder]/frontend
+   cd koala-sign-learn/frontend
    ```
 2. **Install dependencies:**
 
@@ -107,5 +103,4 @@ This project requires **Python** for the backend and **Node.js/npm** for the fro
    npm run dev
    ```
 
-   The learning interface will be available at `http://localhost:5173`.
 
