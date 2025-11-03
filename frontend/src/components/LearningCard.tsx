@@ -33,7 +33,9 @@ export const LearningCard = ({ word, onNext }: LearningCardProps) => {
   const [isRecording, setIsRecording] = useState(false);
   const [feedback, setFeedback] = useState<FeedbackState>("idle");
   const [videoFile, setVideoFile] = useState<VideoFile | null>(null);
-  
+  const [isReadyToSubmit, setIsReadyToSubmit] = useState(false);
+  const [countdown, setCountdown] = useState<number | null>(null);
+
   const videoRef = useRef<HTMLVideoElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -45,6 +47,7 @@ export const LearningCard = ({ word, onNext }: LearningCardProps) => {
     setFeedback("idle");
     setVideoFile(null);
     setIsRecording(false);
+    setIsReadyToSubmit(false);
     
     if (videoRef.current) {
         videoRef.current.src = "";
@@ -135,50 +138,71 @@ export const LearningCard = ({ word, onNext }: LearningCardProps) => {
 
   const startRecording = async () => {
     resetState();
-    
+    setIsReadyToSubmit(false);
+  
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        video: true, 
-        audio: false 
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: true,
+        audio: false,
       });
-      
+  
+      // Display camera feed
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
       }
-
+  
+      // Prepare MediaRecorder
       const mediaRecorder = new MediaRecorder(stream);
       mediaRecorderRef.current = mediaRecorder;
       chunksRef.current = [];
-
+  
       mediaRecorder.ondataavailable = (e) => {
         if (e.data.size > 0) {
           chunksRef.current.push(e.data);
         }
       };
-
+  
       mediaRecorder.onstop = () => {
         const blob = new Blob(chunksRef.current, { type: "video/webm" });
         const url = URL.createObjectURL(blob);
-        
+  
         setVideoFile({ blob, url });
-        
-        stream.getTracks().forEach(track => track.stop());
-        if (videoRef.current) {
-             videoRef.current.srcObject = null;
-        }
-
-        runInference(blob);
+        setIsRecording(false);
+        setIsReadyToSubmit(true);
+  
+        // Stop camera tracks
+        stream.getTracks().forEach((track) => track.stop());
+        if (videoRef.current) videoRef.current.srcObject = null;
+  
+        toast.info("🎬 Recording complete. Review your video or submit it for analysis.");
       };
-
-      mediaRecorder.start();
-      setIsRecording(true);
-      toast.info("Recording started. Sign the word now!");
+  
+      // 🕒 Countdown before recording
+      let count = 3;
+      setCountdown(count);
+  
+      const countdownInterval = setInterval(() => {
+        count -= 1;
+        if (count > 0) {
+          setCountdown(count);
+        } else {
+          clearInterval(countdownInterval);
+          setCountdown(null);
+  
+          // Start recording after countdown
+          mediaRecorder.start();
+          setIsRecording(true);
+          toast.info("🎥 Recording started. Sign the word now!");
+        }
+      }, 1000);
     } catch (error) {
-      toast.error("Could not access camera. Please ensure permissions are granted.");
-      console.error(error);
+      console.error("Camera error:", error);
+      toast.error("❌ Could not access camera. Please ensure permissions are granted.");
       resetState();
     }
   };
+  
+  
 
   const stopRecording = () => {
     if (mediaRecorderRef.current && isRecording) {
@@ -213,25 +237,32 @@ export const LearningCard = ({ word, onNext }: LearningCardProps) => {
             <h2 className="text-5xl font-extrabold text-blue-600">{word}</h2>
           </div>
 
-          {/* Video Area */}
-          <div className="relative aspect-video bg-gray-100 border-2 border-dashed border-gray-300 rounded-xl overflow-hidden shadow-inner">
-            
-            <video
-                ref={videoRef}
-                autoPlay={!videoFile?.url}
-                muted
-                playsInline
-                controls={isVideoReady}
-                src={videoFile?.url || undefined}
-                className="w-full h-full object-cover"
-            />
-            
-            {/* Placeholder when idle */}
-            {isIdle && !isRecording && (
-              <div className="absolute inset-0 flex items-center justify-center bg-gray-50/70">
-                <Camera className="h-16 w-16 text-gray-400" />
-              </div>
-            )}
+        {/* Video Area */}
+        <div className="relative aspect-video bg-gray-100 border-2 border-dashed border-gray-300 rounded-xl overflow-hidden shadow-inner">
+          
+          <video
+              ref={videoRef}
+              autoPlay={!videoFile?.url}
+              muted
+              playsInline
+              controls={isVideoReady}
+              src={videoFile?.url || undefined}
+              className="w-full h-full object-cover"
+          />
+
+          {/* Countdown Overlay */}
+          {countdown !== null && (
+            <div className="absolute inset-0 flex items-center justify-center bg-black/50 z-50">
+              <span className="text-white text-6xl font-bold animate-pulse">{countdown}</span>
+            </div>
+          )}
+
+          {/* Placeholder when idle */}
+          {isIdle && !isRecording && (
+            <div className="absolute inset-0 flex items-center justify-center bg-gray-50/70">
+              <Camera className="h-16 w-16 text-gray-400" />
+            </div>
+          )}
 
             {/* Recording Indicator */}
             {isRecording && (
@@ -270,7 +301,7 @@ export const LearningCard = ({ word, onNext }: LearningCardProps) => {
           {/* Controls */}
           <div className="space-y-4">
             {/* Input Options (Upload/Record) */}
-            {(isIdle || feedback === "incorrect") && (
+            {(isIdle || feedback === "incorrect") && !isReadyToSubmit && (
                 <div className="flex gap-4">
                     <Button
                         onClick={() => fileInputRef.current?.click()}
@@ -324,6 +355,35 @@ export const LearningCard = ({ word, onNext }: LearningCardProps) => {
                     Next Word
                     <ArrowRight className="ml-2 h-5 w-5" />
                   </Button>
+                )}
+
+                {/* After Recording - Show Review Controls */}
+                {isReadyToSubmit && (
+                  <div className="flex justify-center gap-4">
+                    <Button
+                      size="lg"
+                      onClick={handleRetry}
+                      variant="outline"
+                      className="text-lg px-8 py-6 border-gray-400 text-gray-700 hover:bg-gray-50"
+                    >
+                      <Camera className="mr-2 h-5 w-5" />
+                      Re-record
+                    </Button>
+
+                    <Button
+                      size="lg"
+                      onClick={() => {
+                        if (videoFile) {
+                          runInference(videoFile.blob);
+                          setIsReadyToSubmit(false);
+                        }
+                      }}
+                      className="text-lg px-8 py-6 bg-blue-600 hover:bg-blue-700 text-white shadow-xl"
+                    >
+                      <Play className="mr-2 h-5 w-5" />
+                      Submit for Analysis
+                    </Button>
+                  </div>
                 )}
 
                 {/* Try Again Button (Only visible when incorrect) */}

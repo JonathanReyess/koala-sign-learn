@@ -31,7 +31,8 @@ app = FastAPI()
 VERCEL_FRONTEND_URL = os.environ.get("VITE_FRONTEND_URL") 
 ALLOWED_ORIGINS = [
     "http://localhost:5173",  # Vite default
-    "http://127.0.0.1:5173"
+    "http://127.0.0.1:5173",
+    "http://localhost:8080"
 ]
 
 if VERCEL_FRONTEND_URL:
