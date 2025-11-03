@@ -1,5 +1,5 @@
 
-## 코아라 - KSL Sign Language Recognition System
+## 코아라 - Korean Sign Language (KSL) Recognition System
 
 This is the repository for the **Koala (코아라)**, which utilizes a deep learning model to classify dynamic Korean Sign Language words from video input. 
 
