@@ -1,17 +1,15 @@
-from fastapi import FastAPI, File, UploadFile, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, File, UploadFile, HTTPException, Request
+from fastapi.responses import JSONResponse
 import torch
 import numpy as np
 import cv2
 import tempfile
 import os
 from model import PoseCNN_LSTM_Attn
-
-# Use mediapipe.solutions instead of full import
 from mediapipe.python.solutions import holistic
 from mediapipe.python.solutions.drawing_utils import draw_landmarks
 
-# Configuration
+# --- Configuration ---
 NUM_JOINTS = 47
 SEQUENCE_LENGTH = 32
 POSE_INDICES = [0, 11, 12, 13, 14]
@@ -22,48 +20,49 @@ reverse_label_map = {
     48:57, 49:58, 51:60, 53:62, 55:64, 58:67, 62:71, 63:72, 64:74
 }
 
-# Initialize FastAPI app
-app = FastAPI()
-
-# --- START: CRITICAL CORS SETUP FOR VERCEL/RENDER COMMUNICATION ---
-
-# Get Vercel frontend URL from environment (set in Render dashboard)
-VERCEL_FRONTEND_URL = os.environ.get("VITE_FRONTEND_URL") 
+# --- Allowed origins ---
 ALLOWED_ORIGINS = [
-    "http://localhost:5173",  # Vite default
+    "http://localhost:5173",
     "http://127.0.0.1:5173",
     "http://localhost:8080",
     "http://localhost:8081",
-    "https://koala-sign-learn.vercel.app"  # Add your Vercel domain directly
+    "https://koala-sign-learn.vercel.app"
 ]
 
+# Optionally append environment variable
+VERCEL_FRONTEND_URL = os.environ.get("VITE_FRONTEND_URL")
 if VERCEL_FRONTEND_URL:
     ALLOWED_ORIGINS.append(VERCEL_FRONTEND_URL)
 
-app.add_middleware(
-    CORSMiddleware,
-    # In production, this list restricts access to only the Vercel app.
-    allow_origins=ALLOWED_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# --- Initialize FastAPI ---
+app = FastAPI()
 
-# --- END: CRITICAL CORS SETUP ---
+# --- Dynamic CORS middleware ---
+@app.middleware("http")
+async def dynamic_cors_middleware(request: Request, call_next):
+    # Handle preflight
+    if request.method == "OPTIONS":
+        response = JSONResponse(content={"ok": True})
+    else:
+        response = await call_next(request)
 
+    origin = request.headers.get("origin")
+    if origin in ALLOWED_ORIGINS:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["Access-Control-Allow-Methods"] = "GET,POST,OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "Authorization,Content-Type"
+    return response
 
-# Load model
-# Render runs on CPU, so we map the model to CPU
+# --- Load model ---
 device = torch.device("cpu")
 model = PoseCNN_LSTM_Attn(num_classes=67)
-# Ensure best_model.pt is in the same directory as app.py (the root of the backend service)
 state = torch.load("best_model.pt", map_location=device)
 model.load_state_dict(state)
 model.to(device)
 model.eval()
 
-# MediaPipe setup
-# Initialize Holistic model once for better performance
+# --- MediaPipe setup ---
 holistic_model = holistic.Holistic(min_detection_confidence=0.5, min_tracking_confidence=0.5)
 
 def extract_landmarks_from_frame(results):
@@ -90,11 +89,10 @@ def preprocess_video(video_path):
         frames.append(frame)
     cap.release()
     
-    joint_seq = []
-    # Ensure there are frames before attempting to sample indices
     if not frames:
         raise ValueError("Video file contained no frames.")
 
+    joint_seq = []
     indices = np.linspace(0, len(frames) - 1, SEQUENCE_LENGTH, dtype=int)
     for idx in indices:
         img = cv2.cvtColor(frames[idx], cv2.COLOR_BGR2RGB)
@@ -103,56 +101,42 @@ def preprocess_video(video_path):
         coords = extract_landmarks_from_frame(results)
         joint_seq.append(coords)
     
-    joint_seq = np.array(joint_seq, dtype=np.float32)
-    joint_seq = joint_seq.transpose(2, 0, 1)  # (C, T, V)
+    joint_seq = np.array(joint_seq, dtype=np.float32).transpose(2, 0, 1)
     return torch.tensor(joint_seq, dtype=torch.float32).unsqueeze(0).to(device)
 
+# --- Routes ---
 @app.get("/")
 def root():
     return {"message": "KSL Sign Recognition API is operational!"}
 
 @app.post("/predict")
 async def predict(video: UploadFile = File(...)):
+    tmp_path = None
     try:
-        # Save uploaded file temporarily
-        # NOTE: Since this is an ML service, you must use tempfile.NamedTemporaryFile
         with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp_file:
             contents = await video.read()
             tmp_file.write(contents)
             tmp_path = tmp_file.name
         
-        # Preprocess and predict
         x = preprocess_video(tmp_path)
         with torch.no_grad():
             output = model(x)
-            # Apply mask to perfect_mapped_classes
             mask = torch.full_like(output, float("-inf"), device=device)
             mask[0, perfect_mapped_classes] = output[0, perfect_mapped_classes]
             pred_idx = int(torch.argmax(mask, dim=1).item())
             label = reverse_label_map.get(pred_idx, "unknown")
         
-        # Clean up temp file
-        os.unlink(tmp_path)
-        
-        return {
-            "success": True,
-            "predicted_class": label,
-            "class_id": pred_idx
-        }
+        return {"success": True, "predicted_class": label, "class_id": pred_idx}
     
     except Exception as e:
-        # Better error handling for file reading or processing issues
         error_message = f"Prediction failed: {type(e).__name__} - {str(e)}"
-        
-        # Clean up temp file if it was created
-        if 'tmp_path' in locals() and os.path.exists(tmp_path):
+        raise HTTPException(status_code=500, detail=error_message)
+    
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
             os.unlink(tmp_path)
 
-        raise HTTPException(
-            status_code=500,
-            detail=error_message
-        )
-
+# --- Run locally ---
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
